@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Royale‑Inspired — HTML + JS</title>
+  <style>
+    /* ====== Styles (modular & readable) ====== */
+    :root{
+      --bg:#0b1220; --panel:#0f1724; --accent:#ffd166; --muted:#94a3b8;
+      --tile:#112033; --ui:#0b1220; --hp:#ef4444; --green:#10b981;
+    }
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:linear-gradient(180deg,#071022 0%, #07172b 100%);color:#e6eef8}
+    .center{display:flex;align-items:center;justify-content:center}
+
+    /* Game area */
+    #game-wrap{width:100%;height:100vh;position:relative;overflow:hidden}
+    canvas{display:block;background:linear-gradient(180deg,#082031 0%, #05202c 100%);width:100%;height:100%}
+
+    /* HUD */
+    .hud{position:absolute;left:0;right:0;top:0;padding:14px;display:flex;justify-content:space-between;pointer-events:none}
+    .panel{background:rgba(6,10,14,0.4);backdrop-filter:blur(4px);padding:10px;border-radius:10px;pointer-events:auto}
+    .left-col{display:flex;gap:10px;align-items:center}
+
+    /* Elixir bar */
+    .elixir{width:160px;height:28px;border-radius:14px;background:rgba(255,255,255,0.05);display:flex;align-items:center;padding:4px}
+    .elixir .bar{flex:1;height:20px;background:linear-gradient(90deg,#073b4c,#118ab2);border-radius:10px;position:relative}
+    .elixir .value{width:40px;text-align:center;margin-left:8px;color:var(--muted);font-weight:600}
+
+    /* Cards */
+    .cards{position:absolute;left:50%;transform:translateX(-50%);bottom:16px;display:flex;gap:8px;padding:8px}
+    .card{width:86px;height:116px;border-radius:10px;background:linear-gradient(180deg,#0e2130,#0c1620);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 6px 18px rgba(2,6,23,0.6);border:1px solid rgba(255,255,255,0.03)}
+    .card .name{font-size:12px;color:var(--muted);margin-top:8px}
+    .card .cost{position:absolute;left:8px;top:8px;background:rgba(0,0,0,0.5);padding:6px;border-radius:8px;font-weight:700}
+
+    /* Main menu overlay */
+    .overlay{position:absolute;inset:0;background:linear-gradient(180deg,rgba(2,6,23,0.75),rgba(2,6,23,0.9));display:flex;align-items:center;justify-content:center;z-index:20}
+    .menu{width:520px;padding:28px;border-radius:12px;background:linear-gradient(180deg,#071129,#071428);box-shadow:0 12px 40px rgba(2,6,23,0.7);text-align:center}
+    .menu h1{margin:0 0 10px;font-size:28px}
+    .menu p{margin:0 0 18px;color:var(--muted)}
+    .btn{display:inline-flex;padding:12px 18px;border-radius:10px;background:linear-gradient(180deg,#ffd166,#fca311);color:#08131b;font-weight:700;border:none;cursor:pointer}
+
+    /* Small readouts */
+    .tower-damage{font-weight:700;color:var(--muted)}
+
+    /* Game over popup */
+    .popup{position:absolute;left:50%;top:40%;transform:translate(-50%,-50%);background:linear-gradient(180deg,#081428,#071022);padding:24px;border-radius:12px;border:1px solid rgba(255,255,255,0.04);display:none;z-index:30}
+
+    @media (max-width:720px){.card{width:68px;height:96px}.menu{width:92%}}
+  </style>
+</head>
+<body>
+  <div id="game-wrap">
+    <canvas id="game"></canvas>
+
+    <div class="hud">
+      <div class="left-col panel">
+        <div class="tower-damage">Player Tower HP: <span id="playerTowerHP">1000</span></div>
+      </div>
+      <div class="panel elixir center">
+        <div class="bar" id="elixirBar" style="width:0%"></div>
+        <div class="value" id="elixirValue">0</div>
+      </div>
+      <div class="panel right-col">
+        <div class="tower-damage">AI Tower HP: <span id="aiTowerHP">1000</span></div>
+      </div>
+    </div>
+
+    <div class="cards" id="cards"></div>
+
+    <div class="overlay" id="menuOverlay">
+      <div class="menu">
+        <h1>Royale‑Inspired</h1>
+        <p>An original, browser-friendly tribute: lanes, elixir, tower defense & simple AI. No assets from other games are used.</p>
+        <button class="btn" id="startBtn">Play vs AI</button>
+      </div>
+    </div>
+
+    <div class="popup panel" id="gameOverPopup">
+      <h2 id="resultTitle">Victory!</h2>
+      <p id="resultText"></p>
+      <div style="margin-top:12px"><button class="btn" id="restartBtn">Play again</button></div>
+    </div>
+
+  </div>
+
+  <script>
+  /* ========== Royale‑Inspired: single-file implementation ==========
+     Notes:
+       - This is an original implementation inspired by lane-based card tower games.
+       - No copyrighted names, art, or assets are included.
+       - Modular, commented, and designed to be extended.
+  */
+
+  // -------------------- Utility helpers --------------------
+  const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+  const rand = (a,b)=>a+Math.random()*(b-a);
+
+  // -------------------- Canvas setup --------------------
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  function resize(){
+    canvas.width = Math.floor(window.innerWidth * devicePixelRatio);
+    canvas.height = Math.floor(window.innerHeight * devicePixelRatio);
+    canvas.style.width = window.innerWidth+'px';
+    canvas.style.height = window.innerHeight+'px';
+    ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // -------------------- Game constants --------------------
+  const LANE_COUNT = 3;
+  const LANE_Y = []; // will be computed
+  const PLAYER_SIDE = 'player';
+  const AI_SIDE = 'ai';
+
+  // towers
+  const TOWER_X_MARGIN = 90;
+  const TOWER_WIDTH = 44;
+  const TOWER_HEIGHT = 110;
+  let playerTowerHP = 1000;
+  let aiTowerHP = 1000;
+
+  // elixir
+  let elixir = 0;
+  const MAX_ELIXIR = 10;
+  const ELIXIR_RATE = 1.0; // per second
+
+  // unit lists
+  let units = [];
+
+  // cards pool (simple, expandable)
+  const CARD_POOL = [
+    {id:'spear', name:'Spearman', cost:2, hp:120, dmg:24, speed:80, range:10, size:10, target:'ground'},
+    {id:'knight', name:'Knight', cost:3, hp:260, dmg:60, speed:60, range:10, size:12, target:'ground'},
+    {id:'archer', name:'Archer', cost:3, hp:90, dmg:30, speed:90, range:120, size:9, target:'both'},
+    {id:'mini', name:'MiniTank', cost:4, hp:420, dmg:90, speed:50, range:12, size:13, target:'ground'},
+    {id:'priest', name:'Healer', cost:4, hp:100, dmg:0, speed:70, range:100, size:10, target:'support', heal:20},
+    {id:'giant', name:'Giant', cost:5, hp:1200, dmg:80, speed:40, range:18, size:18, target:'building'}
+  ];
+
+  // active player's deck (random initial 4)
+  let playerDeck = [];
+  let aiDeck = [];
+
+  // draw queue: show 4 cards at bottom
+  const HAND_SIZE = 4;
+
+  // timers
+  let last = performance.now();
+  let running = false;
+
+  // -------------------- Layout compute --------------------
+  function recomputeLayout(){
+    LANE_Y.length = 0;
+    const h = window.innerHeight;
+    for(let i=0;i<LANE_COUNT;i++){
+      const t = (i+1)/(LANE_COUNT+1);
+      LANE_Y.push(Math.floor(h * t));
+    }
+  }
+  recomputeLayout();
+  window.addEventListener('resize', recomputeLayout);
+
+  // -------------------- Game objects & behaviors --------------------
+  class Unit{
+    constructor(cfg){
+      this.id = cfg.id;
+      this.name = cfg.name;
+      this.side = cfg.side; // 'player' or 'ai'
+      this.x = cfg.x; this.y = cfg.y;
+      this.hp = cfg.hp; this.maxHp = cfg.hp;
+      this.dmg = cfg.dmg; this.range = cfg.range; this.speed = cfg.speed; this.size = cfg.size;
+      this.targetType = cfg.targetType || 'ground';
+      this.attackCooldown = 0; this.attackRate = 0.9; // seconds
+      this.heal = cfg.heal || 0;
+      this.target = null;
+    }
+    update(dt){
+      // find nearest enemy in lane
+      if(!this.target || this.target.hp<=0 || Math.abs(this.target.y - this.y)>60){
+        this.target = findNearestEnemy(this);
+      }
+      // If target in range, attack
+      if(this.target){
+        const dist = Math.hypot(this.target.x - this.x, this.target.y - this.y);
+        if(dist <= this.range + this.size + (this.target.size||10)){
+          // attack
+          this.attackCooldown -= dt;
+          if(this.attackCooldown<=0){
+            this.attackCooldown = this.attackRate;
+            if(this.heal>0){
+              // healer heals friendly target
+              this.target.hp = Math.min(this.target.maxHp, this.target.hp + this.heal);
+            } else {
+              this.target.hp -= this.dmg;
+            }
+          }
+        } else {
+          // move toward target
+          const dir = Math.sign(this.target.x - this.x);
+          this.x += dir * this.speed * dt;
+        }
+      } else {
+        // no unit target: move toward enemy towers
+        const dir = this.side===PLAYER_SIDE?1:-1;
+        this.x += dir * this.speed * dt;
+      }
+    }
+    draw(ctx){
+      // simple representation: circle + hp bar
+      ctx.save();
+      ctx.beginPath();
+      ctx.fillStyle = this.side===PLAYER_SIDE? '#2dd4bf' : '#fb7185';
+      ctx.arc(this.x, this.y, this.size, 0, Math.PI*2);
+      ctx.fill();
+      // hp bar
+      const w = this.size*2; const hpw = clamp(this.hp/this.maxHp,0,1)*w;
+      ctx.fillStyle='#081022'; ctx.fillRect(this.x-w/2, this.y-this.size-12, w,6);
+      ctx.fillStyle='#10b981'; ctx.fillRect(this.x-w/2, this.y-this.size-12, hpw,6);
+      ctx.restore();
+    }
+  }
+
+  function findNearestEnemy(unit){
+    // first look for enemy units in same lane
+    let best = null; let bestDist = Infinity;
+    for(const u of units){
+      if(u.side === unit.side) continue;
+      if(Math.abs(u.y - unit.y) > 60) continue; // lane mismatch
+      const d = Math.abs(u.x - unit.x);
+      if(d < bestDist){ bestDist = d; best = u; }
+    }
+    if(best) return best;
+    // otherwise target enemy tower by constructing a fake target object
+    if(unit.side===PLAYER_SIDE){
+      return {x:canvas.width/devicePixelRatio - TOWER_X_MARGIN - TOWER_WIDTH/2, y:unit.y, hp: (aiTowerHP), size: TOWER_WIDTH, maxHp: aiTowerHP};
+    } else {
+      return {x:TOWER_X_MARGIN + TOWER_WIDTH/2, y:unit.y, hp: (playerTowerHP), size: TOWER_WIDTH, maxHp: playerTowerHP};
+    }
+  }
+
+  // -------------------- Spawning --------------------
+  function spawnUnit(cardCfg, side, laneIndex){
+    const laneY = LANE_Y[laneIndex];
+    const x = side===PLAYER_SIDE ? (TOWER_X_MARGIN + TOWER_WIDTH + 40) : (canvas.width/devicePixelRatio - TOWER_X_MARGIN - TOWER_WIDTH - 40);
+    const spawn = new Unit({
+      id: cardCfg.id+'@'+Date.now(), name:cardCfg.name, side, x, y:laneY, hp:cardCfg.hp, dmg:cardCfg.dmg, speed:cardCfg.speed/100, range:cardCfg.range, size:cardCfg.size, targetType:cardCfg.target, heal:cardCfg.heal
+    });
+    units.push(spawn);
+  }
+
+  // -------------------- Card & hand UI --------------------
+  const cardsDiv = document.getElementById('cards');
+  function initHands(){
+    playerDeck = shuffleArray(CARD_POOL.slice()).slice(0,8);
+    aiDeck = shuffleArray(CARD_POOL.slice()).slice(0,8);
+    playerHand = drawHandFromDeck(playerDeck);
+    aiHand = drawHandFromDeck(aiDeck);
+    renderHand();
+  }
+  function shuffleArray(a){return a.sort(()=>Math.random()-0.5)}
+  function drawHandFromDeck(deck){
+    const hand = [];
+    for(let i=0;i<HAND_SIZE;i++) hand.push(deck[i % deck.length]);
+    return hand;
+  }
+  let playerHand = [];
+  let aiHand = [];
+
+  function renderHand(){
+    cardsDiv.innerHTML = '';
+    playerHand.forEach((c,idx)=>{
+      const el = document.createElement('div'); el.className='card panel'; el.dataset.idx = idx;
+      el.innerHTML = `<div class="cost">${c.cost}</div><div style="font-weight:800;font-size:16px">${c.name}</div><div class="name">${c.id}</div>`;
+      el.addEventListener('click', ()=>onCardClick(idx));
+      cardsDiv.appendChild(el);
+    });
+  }
+
+  // Player clicks a card -> choose lane by clicking canvas
+  let pendingCardIndex = null;
+  function onCardClick(idx){
+    const card = playerHand[idx];
+    if(!card) return;
+    if(elixir < card.cost) return; // not enough
+    pendingCardIndex = idx;
+    // show instruction by changing cursor
+    canvas.style.cursor = 'crosshair';
+  }
+
+  canvas.addEventListener('click', (e)=>{
+    if(pendingCardIndex===null) return;
+    const rect = canvas.getBoundingClientRect();
+    const cx = (e.clientX - rect.left);
+    const cy = (e.clientY - rect.top);
+    // pick nearest lane
+    let best = 0; let bestd = Infinity;
+    for(let i=0;i<LANE_Y.length;i++){
+      const d = Math.abs(LANE_Y[i] - cy);
+      if(d<bestd){bestd=d;best=i}
+    }
+    const card = playerHand[pendingCardIndex];
+    elixir -= card.cost; updateElixirUI();
+    spawnUnit(card, PLAYER_SIDE, best);
+    // replace card from deck
+    playerHand[pendingCardIndex] = drawFromDeck(playerDeck);
+    pendingCardIndex = null; canvas.style.cursor = 'default'; renderHand();
+  });
+
+  function drawFromDeck(deck){
+    const idx = Math.floor(Math.random()*deck.length); return deck[idx];
+  }
+
+  // -------------------- Elixir regen & AI play --------------------
+  function startElixirLoop(){
+    // We will update elixir in the step loop as well, but keep a small interval to ensure
+  }
+
+  // AI behaviour: simple greedy algorithm with small randomness
+  let aiPlayCooldown = 0;
+  function aiThink(dt){
+    aiPlayCooldown -= dt;
+    if(aiPlayCooldown > 0) return;
+    aiPlayCooldown = 0.4 + Math.random()*0.8;
+    // choose playable cards
+    const playable = aiHand.filter(c=>c.cost <= elixir+0.001);
+    if(playable.length===0) return;
+    // choose card that is best vs player: prefer tanks when towers healthy
+    const choice = playable[Math.floor(Math.random()*playable.length)];
+    // choose a lane: random or toward weak tower area
+    const lane = Math.floor(Math.random()*LANE_COUNT);
+    // spend elixir
+    elixir -= choice.cost; updateElixirUI();
+    spawnUnit(choice, AI_SIDE, lane);
+    // replace chosen card
+    const idx = aiHand.indexOf(choice);
+    aiHand[idx] = drawFromDeck(aiDeck);
+    // small chance to 'combo' spawn additional cheap unit
+    if(Math.random() < 0.15){
+      const cheap = aiDeck.find(c=>c.cost<=2);
+      if(cheap) spawnUnit(cheap, AI_SIDE, lane);
+    }
+    // re-render not necessary for ai
+  }
+
+  // -------------------- Game loop --------------------
+  function update(dt){
+    // elixir regen
+    elixir = clamp(elixir + ELIXIR_RATE*dt, 0, MAX_ELIXIR);
+    updateElixirUI();
+
+    // update units
+    for(const u of units) u.update(dt);
+    // collisions & prune dead
+    for(let i=units.length-1;i>=0;i--){
+      const u = units[i];
+      if(u.hp<=0){ units.splice(i,1); continue; }
+      // hitting enemy tower?
+      if(u.side===PLAYER_SIDE && u.x >= canvas.width/devicePixelRatio - TOWER_X_MARGIN - TOWER_WIDTH){
+        // damage the tower
+        aiTowerHP -= u.dmg * dt; // continuous small damage while touching
+        document.getElementById('aiTowerHP').textContent = Math.max(0, Math.floor(aiTowerHP));
+        if(aiTowerHP <= 0) return endGame('player');
+      }
+      if(u.side===AI_SIDE && u.x <= TOWER_X_MARGIN + TOWER_WIDTH){
+        playerTowerHP -= u.dmg * dt;
+        document.getElementById('playerTowerHP').textContent = Math.max(0, Math.floor(playerTowerHP));
+        if(playerTowerHP <= 0) return endGame('ai');
+      }
+    }
+
+    // AI decision
+    aiThink(dt);
+  }
+
+  function draw(){
+    // clear
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    const w = canvas.width/devicePixelRatio; const h = canvas.height/devicePixelRatio;
+
+    // draw lanes
+    ctx.save();
+    ctx.globalAlpha = 0.06;
+    for(const y of LANE_Y){ ctx.fillStyle = '#ffffff'; ctx.fillRect(0,y-1,w,2); }
+    ctx.restore();
+
+    // draw towers
+    // player tower (left)
+    ctx.save(); ctx.fillStyle='#0ea5a4'; ctx.fillRect(TOWER_X_MARGIN, LANE_Y[1]-TOWER_HEIGHT/2, TOWER_WIDTH, TOWER_HEIGHT);
+    ctx.fillStyle='#081022'; ctx.fillRect(TOWER_X_MARGIN+6, LANE_Y[1]-TOWER_HEIGHT/2+8, TOWER_WIDTH-12, TOWER_HEIGHT-16);
+    ctx.restore();
+    // ai tower (right)
+    ctx.save(); ctx.fillStyle='#fb7185'; ctx.fillRect(w - TOWER_X_MARGIN - TOWER_WIDTH, LANE_Y[1]-TOWER_HEIGHT/2, TOWER_WIDTH, TOWER_HEIGHT);
+    ctx.fillStyle='#081022'; ctx.fillRect(w - TOWER_X_MARGIN - TOWER_WIDTH +6, LANE_Y[1]-TOWER_HEIGHT/2+8, TOWER_WIDTH-12, TOWER_HEIGHT-16);
+    ctx.restore();
+
+    // draw units
+    for(const u of units) u.draw(ctx);
+
+    // draw floating UI (tower HP bars)
+    // player tower hp bar
+    const barW = 160; const barH=10;
+    const leftBarX = 20; const barY = 18;
+    ctx.fillStyle='#072029'; ctx.fillRect(leftBarX, barY, barW, barH);
+    ctx.fillStyle='#10b981'; ctx.fillRect(leftBarX, barY, clamp(playerTowerHP/1000,0,1)*barW, barH);
+    ctx.fillStyle='#fff'; ctx.fillText('Player Tower', leftBarX, barY+28);
+    // ai
+    const rightBarX = w - 20 - barW;
+    ctx.fillStyle='#072029'; ctx.fillRect(rightBarX, barY, barW, barH);
+    ctx.fillStyle='#ef4444'; ctx.fillRect(rightBarX, barY, clamp(aiTowerHP/1000,0,1)*barW, barH);
+    ctx.fillStyle='#fff'; ctx.fillText('AI Tower', rightBarX, barY+28);
+  }
+
+  function loop(now){
+    if(!running) return;
+    const dt = Math.min(0.05, (now - last)/1000);
+    last = now;
+    update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // -------------------- UI helpers --------------------
+  function updateElixirUI(){
+    const pct = (elixir / MAX_ELIXIR) * 100;
+    document.getElementById('elixirBar').style.width = pct + '%';
+    document.getElementById('elixirValue').textContent = Math.floor(elixir);
+  }
+
+  // -------------------- Game control --------------------
+  function startGame(){
+    // reset state
+    playerTowerHP = 1000; aiTowerHP = 1000; document.getElementById('playerTowerHP').textContent = playerTowerHP; document.getElementById('aiTowerHP').textContent = aiTowerHP;
+    units = []; elixir = 4; updateElixirUI(); initHands();
+    running = true; last = performance.now();
+    document.getElementById('menuOverlay').style.display = 'none';
+    document.getElementById('gameOverPopup').style.display='none';
+    requestAnimationFrame(loop);
+  }
+
+  function endGame(winner){
+    running = false;
+    const popup = document.getElementById('gameOverPopup'); popup.style.display = 'block';
+    const title = document.getElementById('resultTitle'); const txt = document.getElementById('resultText');
+    if(winner==='player'){ title.textContent='Victory!'; txt.textContent='You destroyed the enemy tower.'; }
+    else { title.textContent='Defeat'; txt.textContent='Your tower was destroyed. Try different tactics.'; }
+  }
+
+  // -------------------- Control wiring --------------------
+  document.getElementById('startBtn').addEventListener('click', ()=>{
+    startGame();
+  });
+  document.getElementById('restartBtn').addEventListener('click', ()=>{
+    startGame();
+  });
+
+  // -------------------- Game tick for elixir & AI --------------------
+  // We'll update elixir + AI at fixed small interval for stable behaviour
+  setInterval(()=>{
+    if(!running) return;
+    elixir = clamp(elixir + 0.5, 0, MAX_ELIXIR);
+    updateElixirUI();
+    // AI: attempt play (note: aiThink used inside update loop for frequency)
+  }, 1000);
+
+  // And a faster tick to let AI think more often
+  setInterval(()=>{ if(running) aiThink(0.12); }, 400);
+
+  // -------------------- Misc helpers --------------------
+  // keep code compact but modularized for extension
+
+  // Expose some debugging commands in console
+  window.royale = { spawnUnit, units, startGame, endGame };
+
+  </script>
+</body>
+</html>
